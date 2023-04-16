@@ -2,7 +2,7 @@ from random import choice
 from twisted.internet import reactor
 # aparently, we need to send packets in this file. For now, I give in.
 from pyspades.contained import (
-    CreatePlayer, SetTool, KillAction, InputData, SetColor, WeaponInput)
+    CreatePlayer, SetTool, KillAction, InputData, SetColor, InputData)
 from pyspades.constants import (GRENADE_KILL, FALL_KILL, NETWORK_FPS)
 from pyspades.common import (
     prettify_timespan,
@@ -269,6 +269,8 @@ def invisible(connection, player):
         world_object = player.world_object
         input_data = InputData()
         input_data.player_id = player.player_id
+        input_data.fire = world_object.primary_fire
+        input_data.aim = world_object.secondary_fire
         input_data.up = world_object.up
         input_data.down = world_object.down
         input_data.left = world_object.left
@@ -283,14 +285,10 @@ def invisible(connection, player):
         set_color = SetColor()
         set_color.player_id = player.player_id
         set_color.value = make_color(*player.color)
-        weapon_input = WeaponInput()
-        weapon_input.primary = world_object.primary_fire
-        weapon_input.secondary = world_object.secondary_fire
         protocol.broadcast_contained(create_player, sender=player, save=True)
         protocol.broadcast_contained(set_tool, sender=player)
         protocol.broadcast_contained(set_color, sender=player, save=True)
         protocol.broadcast_contained(input_data, sender=player)
-        protocol.broadcast_contained(weapon_input, sender=player)
     if connection is not player and connection in protocol.players.values():
         if player.invisible:
             return '%s is now invisible' % player.name

@@ -69,7 +69,6 @@ def apply_script(protocol, connection, config):
                 if self != killer:
                     killer.ratio_kills += 1
                     killer.ratio_headshotkills += type == HEADSHOT_KILL
-                    killer.ratio_meleekills += type == MELEE_KILL
                     killer.ratio_grenadekills += type == GRENADE_KILL
 
             self.ratio_deaths += 1

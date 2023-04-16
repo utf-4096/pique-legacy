@@ -31,8 +31,7 @@ from pyspades.types import IDPool
 from pyspades.master import get_master_connection
 from pyspades.team import Team
 from pyspades.entities import Territory
-# importing tc_data is a quick hack since this file writes into it
-from pyspades.player import ServerConnection, tc_data
+from pyspades.player import ServerConnection
 from pyspades import world
 from pyspades.bytes import ByteWriter
 from pyspades import contained as loaders
@@ -185,18 +184,6 @@ class ServerProtocol(BaseProtocol):
                       DeprecationWarning, stacklevel=2)
         self.broadcast_contained(*args, **kwargs)
 
-    def reset_tc(self):
-        self.entities = self.get_cp_entities()
-        for entity in self.entities:
-            team = entity.team
-            if team is None:
-                entity.progress = 0.5
-            else:
-                team.score += 1
-                entity.progress = float(team.id)
-        tc_data.set_entities(self.entities)
-        self.max_score = len(self.entities)
-
     def get_cp_entities(self):
         # cool algorithm number 1
         entities = []
@@ -260,6 +247,10 @@ class ServerProtocol(BaseProtocol):
             await asyncio.sleep(delay)
 
     def update_network(self):
+        # no such thing as a worldupdate in 0.60
+        # todo: actually fix this
+        return
+
         if not len(self.players):
             return
         items = []
@@ -291,8 +282,6 @@ class ServerProtocol(BaseProtocol):
         self.on_map_change(map_obj)
         self.team_1.initialize()
         self.team_2.initialize()
-        if self.game_mode == TC_MODE:
-            self.reset_tc()
         self.players = {}
         if self.connections:
             data = ProgressiveMapGenerator(self.map, parent=True)
@@ -322,15 +311,6 @@ class ServerProtocol(BaseProtocol):
             intel_capture.player_id = player.player_id
             intel_capture.winning = True
             self.broadcast_contained(intel_capture, save=True)
-        elif self.game_mode == TC_MODE:
-            if territory is None:
-                territory = self.entities[0]
-            territory_capture = loaders.TerritoryCapture()
-            territory_capture.object_index = territory.id
-            territory_capture.winning = True
-            territory_capture.state = territory.team.id
-            self.broadcast_contained(territory_capture)
-            self.reset_tc()
         for entity in self.entities:
             entity.update()
         for player in self.players.values():

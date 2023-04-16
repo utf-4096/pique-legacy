@@ -21,7 +21,7 @@ from pyspades.constants import (BLOCK_TOOL, CTF_MODE, ERROR_FULL,
                                 ERROR_WRONG_VERSION, FALL_KILL, HEAD,
                                 HEADSHOT_KILL, HIT_TOLERANCE,
                                 FOG_DISTANCE, MAX_BLOCK_DISTANCE, MAX_POSITION_RATE,
-                                MELEE, MELEE_DISTANCE, MELEE_KILL,
+                                MELEE, MELEE_DISTANCE,
                                 RAPID_WINDOW_ENTRIES, SPADE_TOOL,
                                 TC_CAPTURE_DISTANCE, TC_MODE, WEAPON_KILL,
                                 WEAPON_TOOL)
@@ -33,9 +33,6 @@ from pyspades.weapon import WEAPONS
 from pyspades.types import RateLimiter
 
 log = Logger()
-
-
-tc_data = loaders.TCState()
 
 
 def check_nan(*values) -> bool:
@@ -136,15 +133,7 @@ class ServerConnection(BaseConnection):
             return
         call_packet_handler(self, loader)
 
-    @register_packet_handler(loaders.ProtocolExtensionInfo)
-    def on_ext_info_received(self, contained: loaders.ProtocolExtensionInfo) -> None:
-        self.proto_extensions = dict(contained.extensions)
-        log.debug("received extinfo {extinfo} from {player}",
-                  extinfo=self.proto_extensions,
-                  player=self)
-
     @register_packet_handler(loaders.ExistingPlayer)
-    @register_packet_handler(loaders.ShortPlayerData)
     def on_new_player_recieved(self, contained: loaders.ExistingPlayer) -> None:
         if self.team is not None and not self.team.spectator:
             # This player has already joined the game as a full player.
@@ -264,12 +253,13 @@ class ServerConnection(BaseConnection):
                                                  self.world_object.position):
                     self.check_refill()
 
-    @register_packet_handler(loaders.WeaponInput)
-    def on_weapon_input_recieved(self, contained: loaders.WeaponInput) -> None:
+    @register_packet_handler(loaders.InputData)
+    def on_input_data_recieved(self, contained: loaders.InputData) -> None:
         if not self.hp:
             return
-        primary = contained.primary
-        secondary = contained.secondary
+
+        primary = contained.fire
+        secondary = contained.aim
         if self.world_object.primary_fire != primary:
             # player has pressed or released primary fire
             if self.tool == WEAPON_TOOL:
@@ -295,13 +285,7 @@ class ServerConnection(BaseConnection):
         self.world_object.secondary_fire = secondary
         if self.filter_weapon_input:
             return
-        contained.player_id = self.player_id
-        self.protocol.broadcast_contained(contained, sender=self)
 
-    @register_packet_handler(loaders.InputData)
-    def on_input_data_recieved(self, contained: loaders.InputData) -> None:
-        if not self.hp:
-            return
         world_object = self.world_object
         returned = self.on_walk_update(contained.up, contained.down,
                                        contained.left, contained.right)
@@ -334,19 +318,18 @@ class ServerConnection(BaseConnection):
             # contained.jump, contained.crouch) = returned
             # self.send_contained(contained)
         returned = self.on_animation_update(
-            contained.jump, contained.crouch, contained.sneak,
-            contained.sprint)
+            contained.jump, contained.crouch, False,
+            False)
         if returned is not None:
             jump, crouch, sneak, sprint = returned
-            if (jump != contained.jump or crouch != contained.crouch or
-                    sneak != contained.sneak or sprint != contained.sprint):
-                (contained.jump, contained.crouch, contained.sneak,
-                    contained.sprint) = returned
+            if (jump != contained.jump or crouch != contained.crouch):
+                (contained.jump, contained.crouch, _,
+                    _) = returned
                 self.send_contained(contained)
         if not self.freeze_animation:
             world_object.set_animation(
-                contained.jump, contained.crouch, contained.sneak,
-                contained.sprint)
+                contained.jump, contained.crouch, False,
+                False)
         if self.filter_visibility_data or self.filter_animation_data:
             return
         self.protocol.broadcast_contained(contained, sender=self)
@@ -365,10 +348,7 @@ class ServerConnection(BaseConnection):
     def on_hit_recieved(self, contained):
         world_object = self.world_object
         value = contained.value
-        is_melee = value == MELEE
-        if is_melee:
-            kill_type = MELEE_KILL
-        elif contained.value == HEAD:
+        if contained.value == HEAD:
             kill_type = HEADSHOT_KILL
         else:
             kill_type = WEAPON_KILL
@@ -550,79 +530,6 @@ class ServerConnection(BaseConnection):
         self.protocol.broadcast_contained(block_action, save=True)
         self.protocol.update_entities()
 
-    @register_packet_handler(loaders.BlockLine)
-    def on_block_line_recieved(self, contained):
-        if not self.hp:
-            return  # dead players can't build
-        if self.line_build_start_pos is None:
-            return
-
-        current_time = reactor.seconds()
-        last_time = self.last_block
-        self.last_block = current_time
-        if (self.rapid_hack_detect and last_time is not None and
-                current_time - last_time < TOOL_INTERVAL[BLOCK_TOOL]):
-            self.rapids.record_event(current_time)
-            if self.rapids.above_limit():
-                log.info('RAPID HACK: {events}',
-                         events=self.rapids.get_events())
-                self.on_hack_attempt('Rapid hack detected')
-            return
-
-        map_ = self.protocol.map
-
-        x1, y1, z1 = (contained.x1, contained.y1, contained.z1)
-        x2, y2, z2 = (contained.x2, contained.y2, contained.z2)
-        pos = self.world_object.position
-        start_pos = self.line_build_start_pos
-
-        if (not map_.is_valid_position(x1, y1, z1)
-                or not map_.is_valid_position(x2, y2, z2)):
-            return  # coordinates are out of bounds
-
-        # ensure that the player is currently within tolerance of the location
-        # that the line build ended at
-        if not collision_3d(pos.x, pos.y, pos.z, x2, y2, z2,
-                            MAX_BLOCK_DISTANCE):
-            return
-
-        # ensure that the player was within tolerance of the location
-        # that the line build started at
-        if not collision_3d(start_pos.x, start_pos.y, start_pos.z, x1, y1, z1,
-                            MAX_BLOCK_DISTANCE):
-            return
-
-        # check if block can be placed in that location
-        if not map_.has_neighbors(x1, y1, z1):
-            return
-
-        if not map_.has_neighbors(x2, y2, z2):
-            return
-
-        points = world.cube_line(x1, y1, z1, x2, y2, z2)
-
-        if not points:
-            return
-
-        if len(points) > (self.blocks + BUILD_TOLERANCE):
-            return
-
-        if self.on_line_build_attempt(points) is False:
-            return
-
-        for point in points:
-            x, y, z = point
-            if map_.get_solid(x, y, z):
-                continue
-            if not map_.build_point(x, y, z, self.color):
-                break
-
-        self.blocks -= len(points)
-        self.on_line_build(points)
-        contained.player_id = self.player_id
-        self.protocol.broadcast_contained(contained, save=True)
-        self.protocol.update_entities()
-
     @register_packet_handler(loaders.ChatMessage)
     def on_chat_message_recieved(self, contained: loaders.ChatMessage) -> None:
         if not self.name:
@@ -652,7 +559,7 @@ class ServerConnection(BaseConnection):
                 team = self.team
             for player in self.protocol.players.values():
                 if not player.deaf:
-                    if team is None or team is player.team:
+                    if team is None or team is player.team and player is not self:
                         player.send_contained(contained)
             self.on_chat_sent(value, global_message)
 
@@ -685,52 +592,9 @@ class ServerConnection(BaseConnection):
         team = ret or team
         self.set_team(team)
 
-    @register_packet_handler(loaders.HandShakeReturn)
-    def on_handshake_recieved(self, contained: loaders.HandShakeReturn) -> None:
-        version_request = loaders.VersionRequest()
-        self.send_contained(version_request)
-
-    @register_packet_handler(loaders.VersionResponse)
-    def on_version_info_recieved(self, contained: loaders.VersionResponse) -> None:
-        self.client_info["version"] = contained.version
-        self.client_info["os_info"] = contained.os_info[:108]
-        # TODO: Make this a dict lookup instead
-        if contained.client == 'o':
-            self.client_info["client"] = "OpenSpades"
-        elif contained.client == 'B':
-            self.client_info["client"] = "BetterSpades"
-            # BetterSpades currently sends the client name in the OS info to
-            # deal with old scripts that don't recognize the 'B' indentifier
-            match = re.match(r"\ABetterSpades \((.*)\)\Z",
-                             contained.os_info[:108])
-            if match:
-                self.client_info["os_info"] = match.groups()[0]
-        elif contained.client == 'a':
-            self.client_info["client"] = "ACE"
-        else:
-            self.client_info["client"] = "Unknown({})".format(contained.client)
-
-        # send extension info to clients that support this packet.
-        # skip openspades <= 0.1.3 https://github.com/piqueserver/piqueserver/issues/504
-        if contained.client == 'o' and contained.version <= (0, 1, 3):
-            log.debug("not sending version request to OpenSpades <= 0.1.3")
-        else:
-            ext_info = loaders.ProtocolExtensionInfo()
-            ext_info.extensions = []
-            self.send_contained(ext_info)
-
     @property
     def client_string(self):
-        client = self.client_info.get("client", "Unknown")
-        os = self.client_info.get("os_info", "Unknown")
-        version = self.client_info.get("version", None)
-        version_string = "Unknown" if version is None else ".".join(
-            map(str, version))
-        if client == os == version_string == "Unknown":
-            client = "Probably Voxlap"
-            os = "Windows"
-            version_string = "0.75"
-        return "{} v{} on {}".format(client, version_string, os)
+        return "Voxlap v0.60 on Windows"
 
     def check_speedhack(self, x: float, y: float, z: float, distance: None = None) -> bool:
         if not self.speedhack_detect:
@@ -873,10 +737,6 @@ class ServerConnection(BaseConnection):
         if not spectator:
             self.on_spawn((x, y, z))
 
-        if not self.client_info:
-            handshake_init = loaders.HandShakeInit()
-            self.send_contained(handshake_init)
-
     def take_flag(self):
         if not self.hp:
             return
@@ -976,9 +836,6 @@ class ServerConnection(BaseConnection):
             friendly_fire = self.protocol.friendly_fire
             friendly_fire_on_grief = self.protocol.friendly_fire_on_grief
             if friendly_fire_on_grief and not friendly_fire:
-                if (kill_type == MELEE_KILL and
-                        not self.protocol.spade_teamkills_on_grief):
-                    return
                 hit_time = self.protocol.friendly_fire_time
                 if (self.last_block_destroy is None
                         or reactor.seconds() - self.last_block_destroy >= hit_time):
@@ -1048,7 +905,6 @@ class ServerConnection(BaseConnection):
             kill_action.player_id = self.player_id
         if by is not None and by is not self:
             by.add_score(1)
-        kill_action.respawn_time = self.get_respawn_time() + 1
         self.protocol.broadcast_contained(kill_action, save=True)
         self.world_object.dead = True
         self.respawn()
@@ -1059,9 +915,6 @@ class ServerConnection(BaseConnection):
     def _connection_ack(self) -> None:
         self._send_connection_data()
         self.send_map(ProgressiveMapGenerator(self.protocol.map))
-        if not self.client_info:
-            handshake_init = loaders.HandShakeInit()
-            self.send_contained(handshake_init)
 
     def _send_connection_data(self) -> None:
         saved_loaders = self.saved_loaders = []
@@ -1089,10 +942,6 @@ class ServerConnection(BaseConnection):
         state_data = loaders.StateData()
         state_data.player_id = self.player_id
         state_data.fog_color = self.protocol.fog_color
-        state_data.team1_color = blue.color
-        state_data.team1_name = blue.name
-        state_data.team2_color = green.color
-        state_data.team2_name = green.name
 
         game_mode = self.protocol.game_mode
 
@@ -1133,9 +982,6 @@ class ServerConnection(BaseConnection):
                 ctf_data.team1_carrier = blue_flag.player.player_id
 
             state_data.state = ctf_data
-
-        elif game_mode == TC_MODE:
-            state_data.state = tc_data
 
         generated_data = state_data.generate()
         saved_loaders.append(generated_data)
@@ -1201,8 +1047,6 @@ class ServerConnection(BaseConnection):
     def _on_reload(self):
         weapon_reload = loaders.WeaponReload()
         weapon_reload.player_id = self.player_id
-        weapon_reload.clip_ammo = self.weapon_object.current_ammo
-        weapon_reload.reserve_ammo = self.weapon_object.current_stock
         self.send_contained(weapon_reload)
 
     def send_map(self, data: Optional[ProgressiveMapGenerator] = None) -> None:
@@ -1240,17 +1084,10 @@ class ServerConnection(BaseConnection):
         if self.deaf:
             return
         chat_message = loaders.ChatMessage()
-        if custom_type > 2 and "client" in self.client_info:
-            if EXTENSION_CHATTYPE in self.proto_extensions:
-                chat_message.chat_type = custom_type
-            else:
-                value = OPENSPADES_CHATTYPES[custom_type] + value
 
-            chat_message.player_id = 35
-            prefix = ''
-
-        elif not global_message:
-            chat_message.chat_type = CHAT_SYSTEM
+        if not global_message:
+            chat_message.chat_type = 2
+            chat_message.player_id = 33
             prefix = ''
         else:
             chat_message.chat_type = CHAT_TEAM
