@@ -233,10 +233,6 @@ class ServerProtocol(BaseProtocol):
                 except Exception:
                     traceback.print_exc()
                 self.world_time += UPDATE_FREQUENCY
-            # Update network
-            if time.monotonic() - self.last_network_update >= 1 / NETWORK_FPS:
-                self.last_network_update = self.world_time
-                self.update_network()
 
             # Notify if update uses more than 70% of time budget
             lag = time.monotonic() - start_time
@@ -245,36 +241,6 @@ class ServerProtocol(BaseProtocol):
 
             delay = self.world_time + UPDATE_FREQUENCY - time.monotonic()
             await asyncio.sleep(delay)
-
-    def update_network(self):
-        # no such thing as a worldupdate in 0.60
-        # todo: actually fix this
-        return
-
-        if not len(self.players):
-            return
-        items = []
-        highest_player_id = max(self.players)
-        for i in range(highest_player_id + 1):
-            position = orientation = None
-            try:
-                player = self.players[i]
-                if (not player.filter_visibility_data and
-                        not player.team.spectator):
-                    world_object = player.world_object
-                    position = world_object.position.get()
-                    orientation = world_object.orientation.get()
-            except (KeyError, TypeError, AttributeError):
-                pass
-            if position is None:
-                position = (0.0, 0.0, 0.0)
-                orientation = (0.0, 0.0, 0.0)
-            items.append((position, orientation))
-        world_update = loaders.WorldUpdate()
-        # we only want to send as many items of the player list as needed, so
-        # we slice it off at the highest player id
-        world_update.items = items[:highest_player_id+1]
-        self.broadcast_contained(world_update, unsequenced=True)
 
     def set_map(self, map_obj):
         self.map = map_obj

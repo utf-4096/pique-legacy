@@ -21,7 +21,6 @@ from pyspades.constants import (BLOCK_TOOL, CTF_MODE, ERROR_FULL,
                                 ERROR_WRONG_VERSION, FALL_KILL, HEAD,
                                 HEADSHOT_KILL, HIT_TOLERANCE,
                                 FOG_DISTANCE, MAX_BLOCK_DISTANCE, MAX_POSITION_RATE,
-                                MELEE, MELEE_DISTANCE,
                                 RAPID_WINDOW_ENTRIES, SPADE_TOOL,
                                 TC_CAPTURE_DISTANCE, TC_MODE, WEAPON_KILL,
                                 WEAPON_TOOL)
@@ -201,6 +200,8 @@ class ServerConnection(BaseConnection):
         if returned is not None:
             x, y, z = returned
         self.world_object.set_orientation(x, y, z)
+        contained.player_id = self.player_id
+        self.protocol.broadcast_contained(contained, sender=self)
 
     @register_packet_handler(loaders.PositionData)
     def on_position_update_recieved(self, contained: loaders.PositionData) -> None:
@@ -252,6 +253,8 @@ class ServerConnection(BaseConnection):
                 if collides and vector_collision(entity,
                                                  self.world_object.position):
                     self.check_refill()
+        contained.player_id = self.player_id
+        self.protocol.broadcast_contained(contained, sender=self)
 
     @register_packet_handler(loaders.InputData)
     def on_input_data_recieved(self, contained: loaders.InputData) -> None:
@@ -358,23 +361,17 @@ class ServerConnection(BaseConnection):
             return
         position1 = world_object.position
         position2 = player.world_object.position
-        if is_melee:
-            hit_amount = self.protocol.melee_damage
-        else:
-            hit_amount = self.weapon_object.get_damage(
-                value, position1, position2)
+        hit_amount = self.weapon_object.get_damage(
+            value, position1, position2)
         self.on_unvalidated_hit(hit_amount, player, kill_type, None)
         if not self.hp:
             return
-        if not is_melee and self.weapon_object.is_empty():
+        if self.weapon_object.is_empty():
             return
         valid_hit = world_object.validate_hit(player.world_object,
                                               value, HIT_TOLERANCE,
                                               self.rubberband_distance)
         if not valid_hit:
-            return
-        if is_melee and not vector_collision(position1, position2,
-                                             MELEE_DISTANCE):
             return
         returned = self.on_hit(hit_amount, player, kill_type, None)
         if returned == False:
@@ -659,6 +656,7 @@ class ServerConnection(BaseConnection):
             if self.world_object is not None:
                 self.world_object.set_position(x, y, z)
         position_data = loaders.PositionData()
+        position_data.player_id = self.player_id
         position_data.x = x
         position_data.y = y
         position_data.z = z
@@ -845,7 +843,7 @@ class ServerConnection(BaseConnection):
         self.set_hp(self.hp - value, by, kill_type=kill_type)
 
     def set_hp(self, value: Union[int, float], hit_by: Optional['ServerConnection'] = None, kill_type: int = WEAPON_KILL,
-               hit_indicator: Optional[Tuple[float, float, float]] = None, grenade: Optional[world.Grenade] = None) -> None:
+               hit_indicator: Optional[int] = None, grenade: Optional[world.Grenade] = None) -> None:
         value = int(value)
         self.hp = max(0, min(100, value))
         if self.hp <= 0:
@@ -856,13 +854,11 @@ class ServerConnection(BaseConnection):
         set_hp.not_fall = int(kill_type != FALL_KILL)
         if hit_indicator is None:
             if hit_by is not None and hit_by is not self:
-                hit_indicator = hit_by.world_object.position.get()
+                hit_indicator = self.world_object.get_hit_direction(
+                    hit_by.world_object.position)
             else:
-                hit_indicator = (0, 0, 0)
-        x, y, z = hit_indicator
-        set_hp.source_x = x
-        set_hp.source_y = y
-        set_hp.source_z = z
+                hit_indicator = 0
+        set_hp.hit_indicator = hit_indicator
         self.send_contained(set_hp)
 
     def set_weapon(self, weapon: int, local: bool = False, no_kill: bool = False) -> None:
@@ -1015,7 +1011,7 @@ class ServerConnection(BaseConnection):
                 elif returned is not None:
                     damage = returned
                 player.set_hp(player.hp - damage, self,
-                              hit_indicator=position.get(), kill_type=GRENADE_KILL,
+                              hit_indicator=self.world_object.get_hit_direction(position), kill_type=GRENADE_KILL,
                               grenade=grenade)
         if self.on_block_destroy(x, y, z, GRENADE_DESTROY) == False:
             return
@@ -1090,9 +1086,8 @@ class ServerConnection(BaseConnection):
             chat_message.player_id = 33
             prefix = ''
         else:
-            chat_message.chat_type = CHAT_TEAM
-            # 34 is guaranteed to be out of range!
-            chat_message.player_id = 35
+            chat_message.chat_type = 2
+            chat_message.player_id = 33
             prefix = self.protocol.server_prefix + ' '
 
         lines = textwrap.wrap(value, MAX_CHAT_SIZE - len(prefix) - 1)
