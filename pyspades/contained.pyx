@@ -245,7 +245,7 @@ cdef class MoveObject(Loader):
     id = 9
 
     cdef public:
-        unsigned int x, y, z, object_type
+        unsigned int x, y, z, object_type, state # state for compatibility reasons
 
     cpdef read(self, ByteReader reader):
         reader.skipBytes(3)
@@ -318,6 +318,24 @@ cdef class BlockAction(Loader):
         writer.writeInt(self.value, True, False)
 
 register_packet(BlockAction)
+
+# Fake BlockLine "packet"
+# Used to keep compatibility with older scripts
+# This is actually never sent, but catched by send/broadcast_contained() and
+# switched for multiple `BlockAction`s.
+cdef class BlockLine(Loader):
+    id = 0
+
+    cdef public:
+        int player_id
+        int x1, y1, z1
+        int x2, y2, z2
+
+    cpdef read(self, ByteReader reader):
+        pass
+
+    cpdef write(self, ByteWriter writer):
+        pass
 
 cdef class CTFState(Loader):
     id = 0

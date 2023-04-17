@@ -56,7 +56,7 @@ from piqueserver.scheduler import Scheduler
 from piqueserver.utils import as_deferred, EndCall
 from piqueserver.bansubscribe import bans_config_urls
 from pyspades.bytes import NoDataLeft
-from pyspades.constants import CTF_MODE, ERROR_SHUTDOWN
+from pyspades.constants import CTF_MODE, TC_MODE, ERROR_SHUTDOWN
 from pyspades.master import MAX_SERVER_NAME_SIZE
 from pyspades.server import ServerProtocol, Team
 from pyspades.tools import make_server_identifier

@@ -1124,6 +1124,24 @@ class ServerConnection(BaseConnection):
         """
         self.send_chat(message, custom_type=CHAT_BIG)
 
+    def send_contained(self, contained):
+        if isinstance(contained, loaders.BlockLine):
+            points = world.cube_line(contained.x1, contained.y1, contained.z1,
+                                contained.x2, contained.y2, contained.z2)
+
+            block_action = loaders.BlockAction()
+            block_action.player_id = contained.player_id
+            block_action.value = 0
+
+            for point in points:
+                x, y, z = point
+                block_action.x = x
+                block_action.y = y
+                block_action.z = z
+                BaseConnection.send_contained(self, block_action)
+        else:
+            BaseConnection.send_contained(self, contained)
+
     # events/hooks
 
     def on_join(self):

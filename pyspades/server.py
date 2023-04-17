@@ -159,22 +159,44 @@ class ServerProtocol(BaseProtocol):
             flags = enet.PACKET_FLAG_UNSEQUENCED
         else:
             flags = enet.PACKET_FLAG_RELIABLE
-        writer = ByteWriter()
-        contained.write(writer)
-        data = bytes(writer)
-        packet = enet.Packet(data, flags)
-        for player in self.connections.values():
-            if player is sender or player.player_id is None:
-                continue
-            if team is not None and player.team is not team:
-                continue
-            if rule is not None and not rule(player):
-                continue
-            if player.saved_loaders is not None:
-                if save:
-                    player.saved_loaders.append(data)
-            else:
-                player.peer.send(0, packet)
+
+        data_list = []
+        if isinstance(contained, loaders.BlockLine):
+            points = world.cube_line(contained.x1, contained.y1, contained.z1,
+                                contained.x2, contained.y2, contained.z2)
+
+            block_action = loaders.BlockAction()
+            block_action.player_id = contained.player_id
+            block_action.value = 0
+
+            for point in points:
+                x, y, z = point
+                block_action.x = x
+                block_action.y = y
+                block_action.z = z
+                writer = ByteWriter()
+                block_action.write(writer)
+                data = bytes(writer)
+                data_list += [data]
+        else:
+            writer = ByteWriter()
+            contained.write(writer)
+            data = bytes(writer)
+            data_list += [data]
+
+        for data in data_list:
+            for player in self.connections.values():
+                if player is sender or player.player_id is None:
+                    continue
+                if team is not None and player.team is not team:
+                    continue
+                if rule is not None and not rule(player):
+                    continue
+                if player.saved_loaders is not None:
+                    if save:
+                        player.saved_loaders.append(data)
+                else:
+                    player.peer.send(0, enet.Packet(data, flags))
 
     # backwards compatability
     def send_contained(self, *args, **kwargs):

@@ -16,11 +16,6 @@ class Entity(Vertex3):
 
     def update(self):
         move_object.object_type = self.id
-        if self.team is None:
-            state = NEUTRAL_TEAM
-        else:
-            state = self.team.id
-        move_object.state = state
         move_object.x = self.x
         move_object.y = self.y
         move_object.z = self.z
