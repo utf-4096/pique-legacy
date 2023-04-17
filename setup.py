@@ -12,7 +12,7 @@ PKG_NAME = "piqueserver"
 
 extra_args = sys.argv[2:]
 
-with open('README.rst') as f:
+with open('README.md') as f:
     long_description = f.read()
 
 # load version info from the piqueserver module manually
@@ -111,7 +111,7 @@ setup(
     maintainer_email='noway@2ch.hk',
     license='GNU General Public License v3',
     long_description=long_description,
-    long_description_content_type="text/x-rst",
+    long_description_content_type="text/markdown",
     url="https://github.com/piqueserver/piqueserver",
     keywords=['ace of spades', 'aos', 'server',
               'pyspades', 'pysnip', 'piqueserver'],
